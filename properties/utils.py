@@ -1,43 +1,31 @@
-from django.core.cache import cache
-from .models import Property
 import logging
 from django_redis import get_redis_connection
-
-def get_all_properties():
-    # Try to get data from Redis
-    properties = cache.get('all_properties')
-    if properties is None:
-        # If not in cache, query the database
-        properties = list(Property.objects.all().values(
-            'id', 'title', 'description', 'price', 'location', 'created_at'
-        ))
-        # Store the result in Redis for 1 hour (3600 seconds)
-        cache.set('all_properties', properties, timeout=3600)
-    return properties
-
 
 logger = logging.getLogger(__name__)
 
 def get_redis_cache_metrics():
-    # Get Redis connection from django-redis
-    conn = get_redis_connection("default")
+    try:
+        conn = get_redis_connection("default")
+        info = conn.info()
 
-    # Fetch Redis INFO
-    info = conn.info()
+        keyspace_hits = info.get("keyspace_hits", 0)
+        keyspace_misses = info.get("keyspace_misses", 0)
+        total_requests = keyspace_hits + keyspace_misses
 
-    # Extract hits and misses
-    hits = info.get("keyspace_hits", 0)
-    misses = info.get("keyspace_misses", 0)
-    total = hits + misses
+        hit_ratio = (keyspace_hits / total_requests) if total_requests > 0 else 0
 
-    # Compute hit ratio
-    hit_ratio = (hits / total) if total > 0 else None
+        logger.info(f"Redis cache metrics - Hits: {keyspace_hits}, Misses: {keyspace_misses}, Hit Ratio: {hit_ratio}")
 
-    # Log the metrics
-    logger.info(f"Redis Metrics — Hits: {hits}, Misses: {misses}, Hit Ratio: {hit_ratio}")
+        return {
+            "keyspace_hits": keyspace_hits,
+            "keyspace_misses": keyspace_misses,
+            "hit_ratio": hit_ratio
+        }
 
-    return {
-        "keyspace_hits": hits,
-        "keyspace_misses": misses,
-        "hit_ratio": hit_ratio,
-    }
+    except Exception as e:
+        logger.error(f"Error retrieving Redis cache metrics: {e}")
+        return {
+            "keyspace_hits": 0,
+            "keyspace_misses": 0,
+            "hit_ratio": 0
+        }
